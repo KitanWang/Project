@@ -49,16 +49,13 @@ class CreateEdgeCommand(Command):
         self.app = app
         self.node1 = node1
         self.node2 = node2
-        # No need to store self.edge here; we will recreate it as needed.
 
     def execute(self):
         x1, y1 = self.app.node_positions[self.node1]
         x2, y2 = self.app.node_positions[self.node2]
-        # Store calculations or use them directly to create the edge
         self.create_edge(x1, y1, x2, y2)
 
     def undo(self):
-        # Use a tuple of node IDs as the key to find and delete the edge
         if (self.node1, self.node2) in self.app.edges:
             edge = self.app.edges[(self.node1, self.node2)]
             self.app.canvas.delete(edge)
@@ -66,12 +63,11 @@ class CreateEdgeCommand(Command):
             del self.app.edge_colors[(self.node1, self.node2)]
 
     def create_edge(self, x1, y1, x2, y2):
-        """Helper function to create an edge between two points."""
         radius = 10
         dx = x2 - x1
         dy = y2 - y1
         dist = ((dx ** 2) + (dy ** 2)) ** 0.5
-        if dist == 0:  # Prevent division by zero if nodes are superimposed
+        if dist == 0:
             return
         dx /= dist
         dy /= dist
@@ -89,8 +85,8 @@ class GraphApp:
         self.master = master
         self.graph = nx.Graph()
         self.master.title("Graph GUI")
-        self.nodes = {}  # Store canvas node objects for reference
-        self.edges = {}  # Store canvas edge objects for reference
+        self.nodes = {}
+        self.edges = {}
         self.node_counter = 0
         self.node_positions = {}
         self.edge_start = None
@@ -106,8 +102,8 @@ class GraphApp:
 
         self.undo_stack = []
         self.redo_stack = []
-        self.master.bind("<Control-z>", self.undo)  # Ctrl+Z for undo
-        self.master.bind("<Control-y>", self.redo)  # Ctrl+Y for redo
+        self.master.bind("<Control-z>", self.undo)
+        self.master.bind("<Control-y>", self.redo)
 
     def handle_canvas_click(self, event):
         clicked_node = None
@@ -124,7 +120,7 @@ class GraphApp:
                     # Use command to create an edge
                     self.execute_command(CreateEdgeCommand(self, self.edge_start, clicked_node))
                 self.edge_start = None
-            self.deselect_edge()  # Deselect any selected edge when a node is clicked
+            self.deselect_edge()
         else:
             clicked_near_edge = False
             for (node1, node2), edge in self.edges.items():
@@ -138,7 +134,6 @@ class GraphApp:
 
             if not clicked_near_edge:
                 self.deselect_edge()
-                # Use command to create a node
                 self.execute_command(CreateNodeCommand(self, event.x, event.y))
 
     def execute_command(self, command):
@@ -146,10 +141,6 @@ class GraphApp:
         command.execute()
         self.undo_stack.append(command)
         self.redo_stack.clear()
-
-    # Modify create_node and create_edge methods if they are still used elsewhere in your code
-    # to ensure they add actions to the undo/redo stack.
-    # Alternatively, you can remove these methods and replace all their calls with execute_command.
 
     def highlight_selected_edge(self):
         """Highlights the selected edge based on its current color."""
@@ -188,7 +179,7 @@ class GraphApp:
             self.canvas.itemconfig(self.edges[self.selected_edge], fill="cyan")
             self.edge_colors[self.selected_edge] = "cyan"
 
-    def undo(self, event=None):  # event=None allows it to be called without an event
+    def undo(self, event=None):
         if self.undo_stack:
             command = self.undo_stack.pop()
             command.undo()
