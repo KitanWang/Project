@@ -13,6 +13,77 @@ def is_near_edge(x1, y1, x2, y2, x, y, tolerance=10):
     return d <= tolerance
 
 
+class Command:
+    """Abstract command class."""
+    def execute(self):
+        pass
+
+    def undo(self):
+        pass
+
+
+class CreateNodeCommand(Command):
+    """Command to create a node."""
+    def __init__(self, app, x, y):
+        self.app = app
+        self.x = x
+        self.y = y
+        self.node_id = None
+
+    def execute(self):
+        self.node_id = self.app.node_counter
+        self.app.node_counter += 1
+        self.app.node_positions[self.node_id] = (self.x, self.y)
+        self.app.nodes[self.node_id] = self.app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10, fill="green", outline="black")
+
+    def undo(self):
+        if self.node_id is not None:
+            self.app.canvas.delete(self.app.nodes[self.node_id])
+            del self.app.nodes[self.node_id]
+            del self.app.node_positions[self.node_id]
+
+
+class CreateEdgeCommand(Command):
+    """Command to create an edge."""
+    def __init__(self, app, node1, node2):
+        self.app = app
+        self.node1 = node1
+        self.node2 = node2
+        # No need to store self.edge here; we will recreate it as needed.
+
+    def execute(self):
+        x1, y1 = self.app.node_positions[self.node1]
+        x2, y2 = self.app.node_positions[self.node2]
+        # Store calculations or use them directly to create the edge
+        self.create_edge(x1, y1, x2, y2)
+
+    def undo(self):
+        # Use a tuple of node IDs as the key to find and delete the edge
+        if (self.node1, self.node2) in self.app.edges:
+            edge = self.app.edges[(self.node1, self.node2)]
+            self.app.canvas.delete(edge)
+            del self.app.edges[(self.node1, self.node2)]
+            del self.app.edge_colors[(self.node1, self.node2)]
+
+    def create_edge(self, x1, y1, x2, y2):
+        """Helper function to create an edge between two points."""
+        radius = 10
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = ((dx ** 2) + (dy ** 2)) ** 0.5
+        if dist == 0:  # Prevent division by zero if nodes are superimposed
+            return
+        dx /= dist
+        dy /= dist
+        adjusted_x1 = x1 + dx * radius
+        adjusted_y1 = y1 + dy * radius
+        adjusted_x2 = x2 - dx * radius
+        adjusted_y2 = y2 - dy * radius
+        edge = self.app.canvas.create_line(adjusted_x1, adjusted_y1, adjusted_x2, adjusted_y2, fill="black")
+        self.app.edges[(self.node1, self.node2)] = edge
+        self.app.edge_colors[(self.node1, self.node2)] = "black"
+
+
 class GraphApp:
     def __init__(self, master):
         self.master = master
@@ -33,18 +104,10 @@ class GraphApp:
         self.master.bind("r", self.color_selected_edge_red)
         self.master.bind("b", self.color_selected_edge_blue)
 
-    def deselect_edge(self):
-        if self.selected_edge:
-            if self.edge_colors[self.selected_edge] == "grey":
-                self.canvas.itemconfig(self.edges[self.selected_edge], fill="black")
-                self.edge_colors[self.selected_edge] = "black"
-            if self.edge_colors[self.selected_edge] == "pink":
-                self.canvas.itemconfig(self.edges[self.selected_edge], fill="red")
-                self.edge_colors[self.selected_edge] = "red"
-            if self.edge_colors[self.selected_edge] == "cyan":
-                self.canvas.itemconfig(self.edges[self.selected_edge], fill="blue")
-                self.edge_colors[self.selected_edge] = "blue"
-        self.selected_edge = None
+        self.undo_stack = []
+        self.redo_stack = []
+        self.master.bind("<Control-z>", self.undo)  # Ctrl+Z for undo
+        self.master.bind("<Control-y>", self.redo)  # Ctrl+Y for redo
 
     def handle_canvas_click(self, event):
         clicked_node = None
@@ -58,7 +121,8 @@ class GraphApp:
                 self.edge_start = clicked_node
             else:
                 if self.edge_start != clicked_node:
-                    self.create_edge(self.edge_start, clicked_node)
+                    # Use command to create an edge
+                    self.execute_command(CreateEdgeCommand(self, self.edge_start, clicked_node))
                 self.edge_start = None
             self.deselect_edge()  # Deselect any selected edge when a node is clicked
         else:
@@ -68,54 +132,73 @@ class GraphApp:
                 if is_near_edge(x1, y1, x2, y2, event.x, event.y):
                     self.deselect_edge()  # Deselect current edge
                     self.selected_edge = (node1, node2)  # Select new edge
-                    if self.edge_colors[(node1, node2)] == "black":
-                        self.canvas.itemconfig(edge, fill="grey")
-                        self.edge_colors[self.selected_edge] = "grey"
-                    if self.edge_colors[(node1, node2)] == "red":
-                        self.canvas.itemconfig(edge, fill="pink")
-                        self.edge_colors[self.selected_edge] = "pink"
-                    if self.edge_colors[(node1, node2)] == "blue":
-                        self.canvas.itemconfig(edge, fill="cyan")
-                        self.edge_colors[self.selected_edge] = "cyan"
+                    self.highlight_selected_edge()
                     clicked_near_edge = True
                     break
 
             if not clicked_near_edge:
                 self.deselect_edge()
-                self.create_node(event.x, event.y)
+                # Use command to create a node
+                self.execute_command(CreateNodeCommand(self, event.x, event.y))
+
+    def execute_command(self, command):
+        """Executes a command, adds it to the undo stack, and clears the redo stack."""
+        command.execute()
+        self.undo_stack.append(command)
+        self.redo_stack.clear()
+
+    # Modify create_node and create_edge methods if they are still used elsewhere in your code
+    # to ensure they add actions to the undo/redo stack.
+    # Alternatively, you can remove these methods and replace all their calls with execute_command.
+
+    def highlight_selected_edge(self):
+        """Highlights the selected edge based on its current color."""
+        if self.selected_edge:
+            edge = self.edges[self.selected_edge]
+            if self.edge_colors[self.selected_edge] == "black":
+                self.canvas.itemconfig(edge, fill="grey")
+                self.edge_colors[self.selected_edge] = "grey"
+            elif self.edge_colors[self.selected_edge] == "red":
+                self.canvas.itemconfig(edge, fill="pink")
+                self.edge_colors[self.selected_edge] = "pink"
+            elif self.edge_colors[self.selected_edge] == "blue":
+                self.canvas.itemconfig(edge, fill="cyan")
+                self.edge_colors[self.selected_edge] = "cyan"
+
+    def deselect_edge(self):
+        if self.selected_edge:
+            if self.edge_colors[self.selected_edge] == "grey":
+                self.canvas.itemconfig(self.edges[self.selected_edge], fill="black")
+                self.edge_colors[self.selected_edge] = "black"
+            if self.edge_colors[self.selected_edge] == "pink":
+                self.canvas.itemconfig(self.edges[self.selected_edge], fill="red")
+                self.edge_colors[self.selected_edge] = "red"
+            if self.edge_colors[self.selected_edge] == "cyan":
+                self.canvas.itemconfig(self.edges[self.selected_edge], fill="blue")
+                self.edge_colors[self.selected_edge] = "blue"
+        self.selected_edge = None
 
     def color_selected_edge_red(self, event):
         if self.selected_edge:
-            self.canvas.itemconfig(self.edges[self.selected_edge], fill="red")
-            self.edge_colors[self.selected_edge] = "red"
+            self.canvas.itemconfig(self.edges[self.selected_edge], fill="pink")
+            self.edge_colors[self.selected_edge] = "pink"
 
     def color_selected_edge_blue(self, event):
         if self.selected_edge:
-            self.canvas.itemconfig(self.edges[self.selected_edge], fill="blue")
-            self.edge_colors[self.selected_edge] = "blue"
+            self.canvas.itemconfig(self.edges[self.selected_edge], fill="cyan")
+            self.edge_colors[self.selected_edge] = "cyan"
 
-    def create_node(self, x, y):
-        node_id = self.node_counter
-        self.node_counter += 1
-        self.node_positions[node_id] = (x, y)
-        self.nodes[node_id] = self.canvas.create_oval(x - 10, y - 10, x + 10, y + 10, fill="green", outline="black")
+    def undo(self, event=None):  # event=None allows it to be called without an event
+        if self.undo_stack:
+            command = self.undo_stack.pop()
+            command.undo()
+            self.redo_stack.append(command)
 
-    def create_edge(self, node1, node2):
-        radius = 10
-        x1, y1 = self.node_positions[node1]
-        x2, y2 = self.node_positions[node2]
-        dx = x2 - x1
-        dy = y2 - y1
-        dist = ((dx ** 2) + (dy ** 2)) ** 0.5
-        dx /= dist
-        dy /= dist
-        adjusted_x1 = x1 + dx * radius
-        adjusted_y1 = y1 + dy * radius
-        adjusted_x2 = x2 - dx * radius
-        adjusted_y2 = y2 - dy * radius
-        edge = self.canvas.create_line(adjusted_x1, adjusted_y1, adjusted_x2, adjusted_y2, fill="black")
-        self.edges[(node1, node2)] = edge
-        self.edge_colors[(node1, node2)] = "black"
+    def redo(self, event=None):
+        if self.redo_stack:
+            command = self.redo_stack.pop()
+            command.execute()
+            self.undo_stack.append(command)
 
 
 if __name__ == "__main__":
