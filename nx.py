@@ -14,7 +14,6 @@ def is_near_edge(x1, y1, x2, y2, x, y, tolerance=10):
 
 
 class Command:
-    """Abstract command class."""
     def execute(self):
         pass
 
@@ -27,10 +26,10 @@ class CreateNodeCommand(Command):
         self.app = app
         self.x = x
         self.y = y
-        self.node_id = node_id  # Allow specifying an existing node ID
+        self.node_id = node_id
 
     def execute(self):
-        if self.node_id is None:  # Assign a new ID only if it wasn't specified
+        if self.node_id is None:
             self.node_id = self.app.node_counter
             self.app.node_counter += 1
         self.app.node_positions[self.node_id] = (self.x, self.y)
@@ -44,7 +43,6 @@ class CreateNodeCommand(Command):
 
 
 class CreateEdgeCommand(Command):
-    """Command to create an edge."""
     def __init__(self, app, node1, node2):
         self.app = app
         self.node1 = node1
@@ -54,6 +52,8 @@ class CreateEdgeCommand(Command):
         x1, y1 = self.app.node_positions[self.node1]
         x2, y2 = self.app.node_positions[self.node2]
         self.create_edge(x1, y1, x2, y2)
+        builder_turn = BuilderTurn(self.app)
+        builder_turn.execute_turn()
 
     def undo(self):
         if (self.node1, self.node2) in self.app.edges:
@@ -61,6 +61,8 @@ class CreateEdgeCommand(Command):
             self.app.canvas.delete(edge)
             del self.app.edges[(self.node1, self.node2)]
             del self.app.edge_colors[(self.node1, self.node2)]
+            builder_turn = BuilderTurn(self.app)
+            builder_turn.undo_turn()
 
     def create_edge(self, x1, y1, x2, y2):
         radius = 10
@@ -81,7 +83,6 @@ class CreateEdgeCommand(Command):
 
 
 class ChangeEdgeColorCommand(Command):
-    """Command to change the color of an edge."""
     def __init__(self, app, edge, new_color):
         self.app = app
         self.edge = edge
@@ -91,10 +92,14 @@ class ChangeEdgeColorCommand(Command):
     def execute(self):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.new_color)
         self.app.edge_colors[self.edge] = self.new_color
+        painter_turn = PainterTurn(self.app)
+        painter_turn.execute_turn()
 
     def undo(self):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.old_color)
         self.app.edge_colors[self.edge] = self.old_color
+        painter_turn = PainterTurn(self.app)
+        painter_turn.undo_turn()
 
 
 class TurnData:
@@ -105,33 +110,32 @@ class TurnData:
         pass
 
 
-class BuilderTurnData(TurnData):
-    def __init__(self, my_app, edge_added):
-        self.app = my_app
-        self.edge_added = edge_added
+class BuilderTurn(TurnData):
+    def __init__(self, app):
+        self.app = app
 
     def execute_turn(self):
-        # Implementation for adding the edge will already be handled by the command pattern
         self.app.current_turn = "Painter"
+        self.app.update_turn_display()
 
     def undo_turn(self):
-        self.app.undo()
         self.app.current_turn = "Builder"
+        self.app.update_turn_display()
 
 
-class PainterTurnData(TurnData):
-    def __init__(self, my_app, edge_coloured, colour):
-        self.app = my_app
-        self.edge_coloured = edge_coloured
-        self.colour = colour
+class PainterTurn(TurnData):
+    def __init__(self, app):
+        self.app = app
 
     def execute_turn(self):
-        # Implementation for coloring the edge will already be handled by the command pattern
         self.app.current_turn = "Builder"
+        self.app.turn_counter += 1
+        self.app.update_turn_display()
 
     def undo_turn(self):
-        self.app.undo()
         self.app.current_turn = "Painter"
+        self.app.turn_counter -= 1
+        self.app.update_turn_display()
 
 
 class GraphApp:
@@ -147,10 +151,15 @@ class GraphApp:
         self.selected_edge = None
         self.edge_colors = {}
         self.current_turn = "Builder"
+        self.turn_counter = 1
         self.canvas = tk.Canvas(master, width=600, height=600, bg='white')
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.master.grid_rowconfigure(0, weight=1)
         self.master.grid_columnconfigure(0, weight=1)
+
+        self.current_turn_label = tk.Label(master, text="")
+        self.current_turn_label.grid(row=1, column=0, sticky="ew")
+        self.update_turn_display()
         self.canvas.bind("<Button-1>", self.handle_canvas_click)
         self.master.bind("r", self.color_selected_edge_red)
         self.master.bind("b", self.color_selected_edge_blue)
@@ -159,6 +168,9 @@ class GraphApp:
         self.redo_stack = []
         self.master.bind("<Control-z>", self.undo)
         self.master.bind("<Control-y>", self.redo)
+
+    def update_turn_display(self):
+        self.current_turn_label.config(text=f"Turn: {self.turn_counter}, Current Player: {self.current_turn}")
 
     def handle_canvas_click(self, event):
         clicked_node = None
@@ -190,7 +202,8 @@ class GraphApp:
 
             if not clicked_near_edge:
                 self.deselect_edge()
-                self.execute_command(CreateNodeCommand(self, event.x, event.y))
+                if self.current_turn == "Builder":
+                    self.execute_command(CreateNodeCommand(self, event.x, event.y))
 
     def execute_command(self, command):
         """Executes a command, adds it to the undo stack, and clears the redo stack."""
@@ -198,8 +211,16 @@ class GraphApp:
         self.undo_stack.append(command)
         self.redo_stack.clear()
 
+    def undo_specific_command(self, command_type, node_id=None):
+        # New method to undo a specific command type, such as undoing node creation
+        for command in reversed(self.undo_stack):
+            if isinstance(command, command_type) and (not node_id or command.node_id == node_id):
+                command.undo()
+                self.undo_stack.remove(command)
+                self.redo_stack.append(command)
+                break
+
     def highlight_selected_edge(self):
-        """Highlights the selected edge based on its current color."""
         if self.selected_edge:
             edge = self.edges[self.selected_edge]
             if self.edge_colors[self.selected_edge] == "black":
