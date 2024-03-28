@@ -22,8 +22,8 @@ class Command:
 
 
 class CreateNodeCommand(Command):
-    def __init__(self, app, x, y, node_id=None):
-        self.app = app
+    def __init__(self, myapp, x, y, node_id=None):
+        self.app = myapp
         self.x = x
         self.y = y
         self.node_id = node_id
@@ -33,7 +33,8 @@ class CreateNodeCommand(Command):
             self.node_id = self.app.node_counter
             self.app.node_counter += 1
         self.app.node_positions[self.node_id] = (self.x, self.y)
-        self.app.nodes[self.node_id] = self.app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10, fill="green", outline="black")
+        self.app.nodes[self.node_id] = self.app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10,
+                                                                   fill="green", outline="black")
 
     def undo(self):
         if self.node_id is not None:
@@ -43,8 +44,8 @@ class CreateNodeCommand(Command):
 
 
 class CreateEdgeCommand(Command):
-    def __init__(self, app, node1, node2):
-        self.app = app
+    def __init__(self, myapp, node1, node2):
+        self.app = myapp
         self.node1 = node1
         self.node2 = node2
 
@@ -84,8 +85,8 @@ class CreateEdgeCommand(Command):
 
 
 class ChangeEdgeColorCommand(Command):
-    def __init__(self, app, edge, new_color):
-        self.app = app
+    def __init__(self, myapp, edge, new_color):
+        self.app = myapp
         self.edge = edge
         self.new_color = new_color
         self.old_color = app.edge_colors[edge]
@@ -196,7 +197,6 @@ class GraphApp:
         self.redo_stack.clear()
 
     def undo_specific_command(self, command_type, node_id=None):
-        # New method to undo a specific command type, such as undoing node creation
         for command in reversed(self.undo_stack):
             if isinstance(command, command_type) and (not node_id or command.node_id == node_id):
                 command.undo()
