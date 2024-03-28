@@ -52,8 +52,10 @@ class CreateEdgeCommand(Command):
         x1, y1 = self.app.node_positions[self.node1]
         x2, y2 = self.app.node_positions[self.node2]
         self.create_edge(x1, y1, x2, y2)
-        builder_turn = BuilderTurn(self.app)
-        builder_turn.execute_turn()
+        self.app.deselect_edge()
+        self.app.selected_edge = (self.node1, self.node2)  # Automatically select the new edge
+        self.app.highlight_selected_edge()  # Highlight the selected edge
+        BuilderTurn(self.app).execute_turn()
 
     def undo(self):
         if (self.node1, self.node2) in self.app.edges:
@@ -61,8 +63,7 @@ class CreateEdgeCommand(Command):
             self.app.canvas.delete(edge)
             del self.app.edges[(self.node1, self.node2)]
             del self.app.edge_colors[(self.node1, self.node2)]
-            builder_turn = BuilderTurn(self.app)
-            builder_turn.undo_turn()
+            BuilderTurn(self.app).undo_turn()
 
     def create_edge(self, x1, y1, x2, y2):
         radius = 10
@@ -92,17 +93,15 @@ class ChangeEdgeColorCommand(Command):
     def execute(self):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.new_color)
         self.app.edge_colors[self.edge] = self.new_color
-        painter_turn = PainterTurn(self.app)
-        painter_turn.execute_turn()
+        PainterTurn(self.app).execute_turn()
 
     def undo(self):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.old_color)
         self.app.edge_colors[self.edge] = self.old_color
-        painter_turn = PainterTurn(self.app)
-        painter_turn.undo_turn()
+        PainterTurn(self.app).undo_turn()
 
 
-class TurnData:
+class Turn:
     def execute_turn(self):
         pass
 
@@ -110,9 +109,9 @@ class TurnData:
         pass
 
 
-class BuilderTurn(TurnData):
-    def __init__(self, app):
-        self.app = app
+class BuilderTurn(Turn):
+    def __init__(self, myapp):
+        self.app = myapp
 
     def execute_turn(self):
         self.app.current_turn = "Painter"
@@ -123,9 +122,9 @@ class BuilderTurn(TurnData):
         self.app.update_turn_display()
 
 
-class PainterTurn(TurnData):
-    def __init__(self, app):
-        self.app = app
+class PainterTurn(Turn):
+    def __init__(self, myapp):
+        self.app = myapp
 
     def execute_turn(self):
         self.app.current_turn = "Builder"
@@ -183,27 +182,12 @@ class GraphApp:
             if self.edge_start is None:
                 self.edge_start = clicked_node
             else:
-                if self.edge_start != clicked_node:
-                    if self.current_turn == "Builder":
-                        self.execute_command(CreateEdgeCommand(self, self.edge_start, clicked_node))
+                if self.edge_start != clicked_node and self.current_turn == "Builder":
+                    self.execute_command(CreateEdgeCommand(self, self.edge_start, clicked_node))
                 self.edge_start = None
-            self.deselect_edge()
         else:
-            clicked_near_edge = False
-            for (node1, node2), edge in self.edges.items():
-                x1, y1, x2, y2 = self.canvas.coords(edge)
-                if is_near_edge(x1, y1, x2, y2, event.x, event.y):
-                    self.deselect_edge()  # Deselect current edge
-                    if self.current_turn == "Painter":
-                        self.selected_edge = (node1, node2)  # Select new edge
-                        self.highlight_selected_edge()
-                    clicked_near_edge = True
-                    break
-
-            if not clicked_near_edge:
-                self.deselect_edge()
-                if self.current_turn == "Builder":
-                    self.execute_command(CreateNodeCommand(self, event.x, event.y))
+            if self.current_turn == "Builder":
+                self.execute_command(CreateNodeCommand(self, event.x, event.y))
 
     def execute_command(self, command):
         """Executes a command, adds it to the undo stack, and clears the redo stack."""
@@ -259,12 +243,26 @@ class GraphApp:
             command = self.undo_stack.pop()
             command.undo()
             self.redo_stack.append(command)
+            # Update selected edge based on the last edge in the stack if available
+            if isinstance(command, CreateEdgeCommand):
+                if self.undo_stack:
+                    for prev_command in reversed(self.undo_stack):
+                        if isinstance(prev_command, CreateEdgeCommand):
+                            self.selected_edge = (prev_command.node1, prev_command.node2)
+                            self.highlight_selected_edge()
+                            break
+                else:
+                    self.deselect_edge()
 
     def redo(self, event=None):
         if self.redo_stack:
             command = self.redo_stack.pop()
             command.execute()
             self.undo_stack.append(command)
+            # Update selected edge based on the redone command if it's an edge creation
+            if isinstance(command, CreateEdgeCommand):
+                self.selected_edge = (command.node1, command.node2)
+                self.highlight_selected_edge()
 
 
 if __name__ == "__main__":
