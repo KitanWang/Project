@@ -1,16 +1,6 @@
 import tkinter as tk
 import networkx as nx
-
-
-def is_near_edge(x1, y1, x2, y2, x, y, tolerance=10):
-    edge_len = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-    if edge_len == 0:
-        return False
-    dot = ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / edge_len ** 2
-    closest_x = x1 + dot * (x2 - x1)
-    closest_y = y1 + dot * (y2 - y1)
-    d = ((closest_x - x) ** 2 + (closest_y - y) ** 2) ** 0.5
-    return d <= tolerance
+from networkx.algorithms import isomorphism
 
 
 class Command:
@@ -35,12 +25,14 @@ class CreateNodeCommand(Command):
         self.app.node_positions[self.node_id] = (self.x, self.y)
         self.app.nodes[self.node_id] = self.app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10,
                                                                    fill="green", outline="black")
+        self.app.update_g_canvas()
 
     def undo(self):
         if self.node_id is not None:
             self.app.canvas.delete(self.app.nodes[self.node_id])
             del self.app.nodes[self.node_id]
             del self.app.node_positions[self.node_id]
+        self.app.update_g_canvas()
 
 
 class CreateEdgeCommand(Command):
@@ -57,6 +49,7 @@ class CreateEdgeCommand(Command):
         self.app.selected_edge = (self.node1, self.node2)  # Automatically select the new edge
         self.app.highlight_selected_edge()  # Highlight the selected edge
         BuilderTurn(self.app).execute_turn()
+        self.app.update_g_canvas()
 
     def undo(self):
         if (self.node1, self.node2) in self.app.edges:
@@ -65,6 +58,7 @@ class CreateEdgeCommand(Command):
             del self.app.edges[(self.node1, self.node2)]
             del self.app.edge_colors[(self.node1, self.node2)]
             BuilderTurn(self.app).undo_turn()
+        self.app.update_g_canvas()
 
     def create_edge(self, x1, y1, x2, y2):
         radius = 10
@@ -95,11 +89,13 @@ class ChangeEdgeColorCommand(Command):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.new_color)
         self.app.edge_colors[self.edge] = self.new_color
         PainterTurn(self.app).execute_turn()
+        self.app.update_g_canvas()
 
     def undo(self):
         self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.old_color)
         self.app.edge_colors[self.edge] = self.old_color
         PainterTurn(self.app).undo_turn()
+        self.app.update_g_canvas()
 
 
 class Turn:
@@ -138,10 +134,15 @@ class PainterTurn(Turn):
         self.app.update_turn_display()
 
 
+def is_monochromatic_copy(g_goal, g_sub):
+    # Use networkx to check if g_goal is a subgraph of g_sub
+    gm = isomorphism.GraphMatcher(g_sub, g_goal)
+    return gm.subgraph_is_isomorphic()
+
+
 class GraphApp:
     def __init__(self, master):
         self.master = master
-        self.graph = nx.Graph()
         self.master.title("Graph GUI")
         self.nodes = {}
         self.edges = {}
@@ -152,6 +153,13 @@ class GraphApp:
         self.edge_colors = {}
         self.current_turn = "Builder"
         self.turn_counter = 1
+        self.goal_achieved = False  # Tracks if the goal has been achieved
+        self.goal_achieved_turn = None
+        self.undo_stack = []
+        self.redo_stack = []
+        self.g_canvas = nx.Graph()
+        self.g_goal = nx.Graph()
+        self.g_goal.add_edges_from([(1, 2), (2, 3), (3, 1)])
         self.canvas = tk.Canvas(master, width=600, height=600, bg='white')
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.master.grid_rowconfigure(0, weight=1)
@@ -160,17 +168,68 @@ class GraphApp:
         self.current_turn_label = tk.Label(master, text="")
         self.current_turn_label.grid(row=1, column=0, sticky="ew")
         self.update_turn_display()
+        self.goal_status_label = tk.Label(master, text="Builder wins on turn ?")
+        self.goal_status_label.grid(row=2, column=0, sticky="ew")
+
         self.canvas.bind("<Button-1>", self.handle_canvas_click)
         self.master.bind("r", self.color_selected_edge_red)
         self.master.bind("b", self.color_selected_edge_blue)
-
-        self.undo_stack = []
-        self.redo_stack = []
         self.master.bind("<Control-z>", self.undo)
         self.master.bind("<Control-y>", self.redo)
+        self.setup_buttons(master)
+
+    def setup_buttons(self, master):
+        btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
+        btn_red.grid(row=3, column=0, sticky="ew")
+
+        btn_blue = tk.Button(master, text="Blue", command=self.wrap_color_blue)
+        btn_blue.grid(row=4, column=0, sticky="ew")
+
+        btn_undo = tk.Button(master, text="Undo", command=self.undo)
+        btn_undo.grid(row=5, column=0, sticky="ew")
+
+        btn_redo = tk.Button(master, text="Redo", command=self.redo)
+        btn_redo.grid(row=6, column=0, sticky="ew")
+
+    def wrap_color_red(self):
+        # Wrapper for coloring the selected edge red
+        self.color_selected_edge_red(None)
+
+    def wrap_color_blue(self):
+        # Wrapper for coloring the selected edge blue
+        self.color_selected_edge_blue(None)
 
     def update_turn_display(self):
         self.current_turn_label.config(text=f"Turn: {self.turn_counter}, Current Player: {self.current_turn}")
+
+    def update_win_status(self):
+        if self.goal_achieved:
+            self.goal_status_label.config(text=f"Builder wins on turn {self.turn_counter}")
+        else:
+            self.goal_status_label.config(text="Builder wins on turn ?")
+
+    def check_goal_achievement(self):
+        # Check for a monochromatic copy of g_goal in g_canvas
+        for color in ["red", "blue"]:
+            subgraph = nx.Graph([(u, v) for u, v, d in self.g_canvas.edges(data=True) if d.get('color') == color])
+            if is_monochromatic_copy(self.g_goal, subgraph):
+                self.goal_achieved = True
+                self.goal_achieved_turn = self.turn_counter
+                self.update_win_status()  # This now also shows goal achievement status
+                break
+        else:
+            self.goal_achieved = False
+            self.update_win_status()
+
+    def update_g_canvas(self):
+        # Update the g_canvas graph based on the current canvas state
+        self.g_canvas.clear()
+        for node in self.nodes:
+            self.g_canvas.add_node(node)
+        for (node1, node2), color in self.edge_colors.items():
+            if color in ["red", "blue"]:  # Only consider colored edges
+                self.g_canvas.add_edge(node1, node2, color=color)
+        self.check_goal_achievement()
 
     def handle_canvas_click(self, event):
         clicked_node = None
