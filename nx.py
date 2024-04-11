@@ -5,6 +5,9 @@ import pickle
 
 
 class Command:
+    def __init__(self, app):
+        self.app = app
+
     def execute(self):
         pass
 
@@ -13,53 +16,51 @@ class Command:
 
 
 class CreateNodeCommand(Command):
-    def __init__(self, myapp, x, y, node_id=None):
-        self.app = myapp
+    def __init__(self, x, y, node_id=None):
         self.x = x
         self.y = y
         self.node_id = node_id
 
     def execute(self):
         if self.node_id is None:
-            self.node_id = self.app.node_counter
-            self.app.node_counter += 1
-        self.app.node_positions[self.node_id] = (self.x, self.y)
-        self.app.nodes[self.node_id] = self.app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10,
+            self.node_id = app.node_counter
+            app.node_counter += 1
+        app.node_positions[self.node_id] = (self.x, self.y)
+        app.nodes[self.node_id] = app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10,
                                                                    fill="green", outline="black")
-        self.app.update_g_canvas()
+        app.update_g_canvas()
 
     def undo(self):
         if self.node_id is not None:
-            self.app.canvas.delete(self.app.nodes[self.node_id])
-            del self.app.nodes[self.node_id]
-            del self.app.node_positions[self.node_id]
-        self.app.update_g_canvas()
+            app.canvas.delete(app.nodes[self.node_id])
+            del app.nodes[self.node_id]
+            del app.node_positions[self.node_id]
+        app.update_g_canvas()
 
 
 class CreateEdgeCommand(Command):
-    def __init__(self, myapp, node1, node2):
-        self.app = myapp
+    def __init__(self, node1, node2):
         self.node1 = node1
         self.node2 = node2
 
     def execute(self):
-        x1, y1 = self.app.node_positions[self.node1]
-        x2, y2 = self.app.node_positions[self.node2]
+        x1, y1 = app.node_positions[self.node1]
+        x2, y2 = app.node_positions[self.node2]
         self.create_edge(x1, y1, x2, y2)
-        self.app.deselect_edge()
-        self.app.selected_edge = (self.node1, self.node2)  # Automatically select the new edge
-        self.app.highlight_selected_edge()  # Highlight the selected edge
-        BuilderTurn(self.app).execute_turn()
-        self.app.update_g_canvas()
+        app.deselect_edge()
+        app.selected_edge = (self.node1, self.node2)  # Automatically select the new edge
+        app.highlight_selected_edge()  # Highlight the selected edge
+        BuilderTurn(app).execute_turn()
+        app.update_g_canvas()
 
     def undo(self):
-        if (self.node1, self.node2) in self.app.edges:
-            edge = self.app.edges[(self.node1, self.node2)]
-            self.app.canvas.delete(edge)
-            del self.app.edges[(self.node1, self.node2)]
-            del self.app.edge_colors[(self.node1, self.node2)]
-            BuilderTurn(self.app).undo_turn()
-        self.app.update_g_canvas()
+        if (self.node1, self.node2) in app.edges:
+            edge = app.edges[(self.node1, self.node2)]
+            app.canvas.delete(edge)
+            del app.edges[(self.node1, self.node2)]
+            del app.edge_colors[(self.node1, self.node2)]
+            BuilderTurn(app).undo_turn()
+        app.update_g_canvas()
 
     def create_edge(self, x1, y1, x2, y2):
         radius = 10
@@ -74,29 +75,28 @@ class CreateEdgeCommand(Command):
         adjusted_y1 = y1 + dy * radius
         adjusted_x2 = x2 - dx * radius
         adjusted_y2 = y2 - dy * radius
-        edge = self.app.canvas.create_line(adjusted_x1, adjusted_y1, adjusted_x2, adjusted_y2, fill="black")
-        self.app.edges[(self.node1, self.node2)] = edge
-        self.app.edge_colors[(self.node1, self.node2)] = "black"
+        edge = app.canvas.create_line(adjusted_x1, adjusted_y1, adjusted_x2, adjusted_y2, fill="black")
+        app.edges[(self.node1, self.node2)] = edge
+        app.edge_colors[(self.node1, self.node2)] = "black"
 
 
 class ChangeEdgeColorCommand(Command):
-    def __init__(self, myapp, edge, new_color):
-        self.app = myapp
+    def __init__(self, edge, new_color):
         self.edge = edge
         self.new_color = new_color
         self.old_color = app.edge_colors[edge]
 
     def execute(self):
-        self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.new_color)
-        self.app.edge_colors[self.edge] = self.new_color
-        PainterTurn(self.app).execute_turn()
-        self.app.update_g_canvas()
+        app.canvas.itemconfig(app.edges[self.edge], fill=self.new_color)
+        app.edge_colors[self.edge] = self.new_color
+        PainterTurn(app).execute_turn()
+        app.update_g_canvas()
 
     def undo(self):
-        self.app.canvas.itemconfig(self.app.edges[self.edge], fill=self.old_color)
-        self.app.edge_colors[self.edge] = self.old_color
-        PainterTurn(self.app).undo_turn()
-        self.app.update_g_canvas()
+        app.canvas.itemconfig(app.edges[self.edge], fill=self.old_color)
+        app.edge_colors[self.edge] = self.old_color
+        PainterTurn(app).undo_turn()
+        app.update_g_canvas()
 
 
 class Turn:
@@ -164,6 +164,7 @@ class GraphUI:
         self.achieved_times = 0
         self.undo_stack = []
         self.redo_stack = []
+        self.command_history = []
         self.g_canvas = nx.Graph()
         self.g_goal = nx.Graph()
         self.g_goal.add_edges_from([(1, 2), (2, 3), (3, 4), (4, 1)])
@@ -197,17 +198,8 @@ class GraphUI:
 
     def save_game_state(self, file_path):
         state = {
-            'nodes': self.nodes,
-            'edges': self.edges,
-            'node_counter': self.node_counter,
-            'node_positions': self.node_positions,
-            'edge_colors': self.edge_colors,
-            'current_turn': self.current_turn,
-            'turn_counter': self.turn_counter,
-            'undo_stack': self.undo_stack,
-            'redo_stack': self.redo_stack,
-            'g_canvas': nx.node_link_data(self.g_canvas),
-            'g_goal': nx.node_link_data(self.g_goal),
+            'command_history': [(type(cmd).__name__, cmd.__dict__) for cmd in self.command_history],
+            # Save other necessary state information as needed
         }
         with open(file_path, 'wb') as file:
             pickle.dump(state, file)
@@ -217,27 +209,8 @@ class GraphUI:
             state = pickle.load(file)
 
         self.canvas.delete("all")
-        self.nodes.clear()
-        self.edges.clear()
+        self.command_history.clear()
 
-        self.node_counter = state['node_counter']
-        self.node_positions = state['node_positions']
-        self.edge_colors = state['edge_colors']
-        self.current_turn = state['current_turn']
-        self.turn_counter = state['turn_counter']
-        self.undo_stack = state['undo_stack']
-        self.redo_stack = state['redo_stack']
-        self.g_canvas = nx.node_link_graph(state['g_canvas'])
-        self.g_goal = nx.node_link_graph(state['g_goal'])
-
-        for node_id, pos in self.node_positions.items():
-            self.canvas.create_oval(pos[0] - 10, pos[1] - 10, pos[0] + 10, pos[1] + 10, fill="green", outline="black")
-        for (node1, node2), color in self.edge_colors.items():
-            x1, y1 = self.node_positions[node1]
-            x2, y2 = self.node_positions[node2]
-            self.canvas.create_line(x1, y1, x2, y2, fill=color)
-
-        self.update_display_info()
 
     def setup_buttons(self, master):
         btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
@@ -303,11 +276,11 @@ class GraphUI:
                 self.edge_start = clicked_node
             else:
                 if self.edge_start != clicked_node and self.current_turn == "Builder":
-                    self.execute_command(CreateEdgeCommand(self, self.edge_start, clicked_node))
+                    self.execute_command(CreateEdgeCommand(self.edge_start, clicked_node))
                 self.edge_start = None
         else:
             if self.current_turn == "Builder":
-                self.execute_command(CreateNodeCommand(self, event.x, event.y))
+                self.execute_command(CreateNodeCommand(event.x, event.y))
 
     def execute_command(self, command):
         """Executes a command, adds it to the undo stack, and clears the redo stack."""
@@ -351,11 +324,11 @@ class GraphUI:
 
     def color_selected_edge_red(self, event):
         if self.current_turn == "Painter" and self.selected_edge and self.edge_colors[self.selected_edge] != "red":
-            self.execute_command(ChangeEdgeColorCommand(self, self.selected_edge, "red"))
+            self.execute_command(ChangeEdgeColorCommand(self.selected_edge, "red"))
 
     def color_selected_edge_blue(self, event):
         if self.current_turn == "Painter" and self.selected_edge and self.edge_colors[self.selected_edge] != "blue":
-            self.execute_command(ChangeEdgeColorCommand(self, self.selected_edge, "blue"))
+            self.execute_command(ChangeEdgeColorCommand(self.selected_edge, "blue"))
 
     def undo(self, event=None):
         if self.undo_stack:
