@@ -1,6 +1,6 @@
 import tkinter as tk
 import networkx as nx
-from itertools import combinations
+from networkx.algorithms import isomorphism
 import pickle
 
 
@@ -113,11 +113,12 @@ class BuilderTurn(Turn):
 
     def execute_turn(self):
         self.app.current_turn = "Painter"
-        self.app.update_display_info()
+        self.app.color_selected_edge()
+        self.app.update_turn_display()
 
     def undo_turn(self):
         self.app.current_turn = "Builder"
-        self.app.update_display_info()
+        self.app.update_turn_display()
 
 
 class PainterTurn(Turn):
@@ -127,24 +128,18 @@ class PainterTurn(Turn):
     def execute_turn(self):
         self.app.current_turn = "Builder"
         self.app.turn_counter += 1
-        self.app.update_display_info()
+        self.app.update_turn_display()
 
     def undo_turn(self):
         self.app.current_turn = "Painter"
         self.app.turn_counter -= 1
-        self.app.update_display_info()
+        self.app.update_turn_display()
 
 
-def is_subgraph_isomorphism(g1, g2):
-    if g2.number_of_edges() < g1.number_of_edges():
-        return False
-
-    for edges in combinations(g2.edges(), g1.number_of_edges()):
-        sg2 = g2.edge_subgraph(edges)
-        if nx.is_isomorphic(g1, sg2):
-            return True
-
-    return False
+def is_monochromatic_copy(g_goal, g_sub):
+    # Use networkx to check if g_goal is a subgraph of g_sub
+    gm = isomorphism.GraphMatcher(g_sub, g_goal)
+    return gm.subgraph_is_isomorphic()
 
 
 class GraphUI:
@@ -174,7 +169,7 @@ class GraphUI:
 
         self.current_turn_label = tk.Label(master, text="")
         self.current_turn_label.grid(row=1, column=0, sticky="ew")
-        self.update_display_info()
+        self.update_turn_display()
         self.goal_status_label = tk.Label(master, text="Builder wins on turn ?")
         self.goal_status_label.grid(row=2, column=0, sticky="ew")
 
@@ -186,6 +181,25 @@ class GraphUI:
         self.master.bind('<Control-s>', self.wrap_save_game)
         self.master.bind('<Control-l>', self.wrap_load_game)
         self.setup_buttons(master)
+
+    def painter_strategy(self, edge):
+        # Temporarily add the edge with red color to g_canvas
+        self.g_canvas.add_edge(edge[0], edge[1], color="red")
+        subgraph = nx.Graph([(u, v) for u, v, d in self.g_canvas.edges(data=True) if d.get('color') == "red"])
+        # Check if adding this edge with red leads to losing condition
+        if is_monochromatic_copy(self.g_goal, subgraph):
+            # If it does, remove the edge and suggest painting it blue
+            self.g_canvas.remove_edge(edge[0], edge[1])
+            return "blue"
+        else:
+            # If it doesn't lead to losing condition, remove the edge (since it's not officially added yet)
+            self.g_canvas.remove_edge(edge[0], edge[1])
+            return "red"
+
+    def color_selected_edge(self, event=None):
+        if self.current_turn == "Painter" and self.selected_edge:
+            suggested_color = self.painter_strategy(self.selected_edge)
+            self.execute_command(ChangeEdgeColorCommand(self, self.selected_edge, suggested_color))
 
     def wrap_save_game(self, event=None):
         self.save_game_state('game_state.pkl')
@@ -237,7 +251,8 @@ class GraphUI:
             x2, y2 = self.node_positions[node2]
             self.canvas.create_line(x1, y1, x2, y2, fill=color)
 
-        self.update_display_info()
+        self.update_turn_display()
+        self.check_goal_achievement()
 
     def setup_buttons(self, master):
         btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
@@ -266,6 +281,29 @@ class GraphUI:
         # Wrapper for coloring the selected edge blue
         self.color_selected_edge_blue(None)
 
+    def update_turn_display(self):
+        self.current_turn_label.config(text=f"Turn: {self.turn_counter}, Current Player: {self.current_turn}")
+
+    def update_win_status(self):
+        if self.goal_achieved:
+            self.goal_status_label.config(text=f"Builder wins on turn {self.turn_counter - 1}")
+        else:
+            self.goal_status_label.config(text="Builder wins on turn ?")
+
+    def check_goal_achievement(self):
+        for color in ["red", "blue"]:
+            subgraph = nx.Graph([(u, v) for u, v, d in self.g_canvas.edges(data=True) if d.get('color') == color])
+            if is_monochromatic_copy(self.g_goal, subgraph):
+                self.goal_achieved = True
+                self.achieved_times += 1
+                if self.achieved_times == 1:
+                    self.update_win_status()
+                break
+        else:
+            self.goal_achieved = False
+            self.achieved_times = 0
+            self.update_win_status()
+
     def update_g_canvas(self):
         self.g_canvas.clear()
         for node in self.nodes:
@@ -273,23 +311,7 @@ class GraphUI:
         for (node1, node2), color in self.edge_colors.items():
             if color in ["red", "blue"]:
                 self.g_canvas.add_edge(node1, node2, color=color)
-
-        for color in ["red", "blue"]:
-            subgraph = nx.Graph([(u, v) for u, v, d in self.g_canvas.edges(data=True) if d.get('color') == color])
-            if is_subgraph_isomorphism(self.g_goal, subgraph):
-                print("Goal achieved")
-                self.goal_achieved = True
-                self.achieved_times += 1
-                if self.achieved_times == 1:
-                    self.goal_status_label.config(text=f"Builder wins on turn {self.turn_counter - 1}")
-                break
-        else:
-            self.goal_achieved = False
-            self.achieved_times = 0
-            self.goal_status_label.config(text="Builder wins on turn ?")
-
-    def update_display_info(self):
-        self.current_turn_label.config(text=f"Turn: {self.turn_counter}, Current Player: {self.current_turn}")
+        self.check_goal_achievement()
 
     def handle_canvas_click(self, event):
         clicked_node = None
@@ -350,12 +372,10 @@ class GraphUI:
         self.selected_edge = None
 
     def color_selected_edge_red(self, event):
-        if self.current_turn == "Painter" and self.selected_edge and self.edge_colors[self.selected_edge] != "red":
-            self.execute_command(ChangeEdgeColorCommand(self, self.selected_edge, "red"))
+        print("color_selected_edge_red should not be called")
 
     def color_selected_edge_blue(self, event):
-        if self.current_turn == "Painter" and self.selected_edge and self.edge_colors[self.selected_edge] != "blue":
-            self.execute_command(ChangeEdgeColorCommand(self, self.selected_edge, "blue"))
+        print("color_selected_edge_blue should not be called")
 
     def undo(self, event=None):
         if self.undo_stack:
