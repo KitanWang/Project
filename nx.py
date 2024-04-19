@@ -198,7 +198,6 @@ class GraphUI:
         self.load_game_state('game_state.pkl')
         print("Game loaded successfully!")
 
-'''
     def save_game_state(self, file_path):
         with open(file_path, 'wb') as f:
             pickle.dump({
@@ -243,7 +242,6 @@ class GraphUI:
 
             self.update_display_info()  # Refresh UI elements
             self.update_g_canvas()  # Update the graph canvas
-'''
 
     def setup_buttons(self, master):
         btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
