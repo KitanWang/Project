@@ -17,6 +17,7 @@ class Command:
 
 class CreateNodeCommand(Command):
     def __init__(self, x, y, node_id=None):
+        super().__init__(app)
         self.x = x
         self.y = y
         self.node_id = node_id
@@ -40,6 +41,7 @@ class CreateNodeCommand(Command):
 
 class CreateEdgeCommand(Command):
     def __init__(self, node1, node2):
+        super().__init__(app)
         self.node1 = node1
         self.node2 = node2
 
@@ -82,6 +84,7 @@ class CreateEdgeCommand(Command):
 
 class ChangeEdgeColorCommand(Command):
     def __init__(self, edge, new_color):
+        super().__init__(app)
         self.edge = edge
         self.new_color = new_color
         self.old_color = app.edge_colors[edge]
@@ -164,7 +167,6 @@ class GraphUI:
         self.achieved_times = 0
         self.undo_stack = []
         self.redo_stack = []
-        self.command_history = []
         self.g_canvas = nx.Graph()
         self.g_goal = nx.Graph()
         self.g_goal.add_edges_from([(1, 2), (2, 3), (3, 4), (4, 1)])
@@ -196,21 +198,52 @@ class GraphUI:
         self.load_game_state('game_state.pkl')
         print("Game loaded successfully!")
 
+'''
     def save_game_state(self, file_path):
-        state = {
-            'command_history': [(type(cmd).__name__, cmd.__dict__) for cmd in self.command_history],
-            # Save other necessary state information as needed
-        }
-        with open(file_path, 'wb') as file:
-            pickle.dump(state, file)
+        with open(file_path, 'wb') as f:
+            pickle.dump({
+                'nodes': self.nodes,
+                'edges': self.edges,
+                'node_counter': self.node_counter,
+                'node_positions': self.node_positions,
+                'selected_edge': self.selected_edge,
+                'edge_colors': self.edge_colors,
+                'current_turn': self.current_turn,
+                'turn_counter': self.turn_counter,
+                'undo_stack': self.undo_stack,
+                'redo_stack': self.redo_stack,
+                'g_canvas': nx.node_link_data(self.g_canvas)  # networkx graph data
+            }, f)
 
     def load_game_state(self, file_path):
-        with open(file_path, 'rb') as file:
-            state = pickle.load(file)
+        with open(file_path, 'rb') as f:
+            data = pickle.load(f)
+            self.nodes = data['nodes']
+            self.edges = data['edges']
+            self.node_counter = data['node_counter']
+            self.node_positions = data['node_positions']
+            self.selected_edge = data['selected_edge']
+            self.edge_colors = data['edge_colors']
+            self.current_turn = data['current_turn']
+            self.turn_counter = data['turn_counter']
+            self.undo_stack = data['undo_stack']
+            self.redo_stack = data['redo_stack']
+            self.g_canvas = nx.node_link_graph(data['g_canvas'])
 
-        self.canvas.delete("all")
-        self.command_history.clear()
+            self.canvas.delete("all")  # Clear the existing canvas
+            for node_id, pos in self.node_positions.items():
+                x, y = pos
+                self.nodes[node_id] = self.canvas.create_oval(x - 10, y - 10, x + 10, y + 10, fill="green",
+                                                              outline="black")
 
+            for (node1, node2), color in self.edge_colors.items():
+                x1, y1 = self.node_positions[node1]
+                x2, y2 = self.node_positions[node2]
+                self.edges[(node1, node2)] = self.canvas.create_line(x1, y1, x2, y2, fill=color)
+
+            self.update_display_info()  # Refresh UI elements
+            self.update_g_canvas()  # Update the graph canvas
+'''
 
     def setup_buttons(self, master):
         btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
