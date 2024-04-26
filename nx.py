@@ -1,7 +1,6 @@
 import tkinter as tk
 import networkx as nx
 from itertools import combinations
-import pickle
 
 
 class Command:
@@ -28,7 +27,7 @@ class CreateNodeCommand(Command):
             app.node_counter += 1
         app.node_positions[self.node_id] = (self.x, self.y)
         app.nodes[self.node_id] = app.canvas.create_oval(self.x - 10, self.y - 10, self.x + 10, self.y + 10,
-                                                                   fill="green", outline="black")
+                                                         fill="green", outline="black")
         app.update_g_canvas()
 
     def undo(self):
@@ -169,7 +168,9 @@ class GraphUI:
         self.redo_stack = []
         self.g_canvas = nx.Graph()
         self.g_goal = nx.Graph()
+        self.dragging_node = None
         self.g_goal.add_edges_from([(1, 2), (2, 3), (3, 4), (4, 1)])
+
         self.canvas = tk.Canvas(master, width=600, height=600, bg='white')
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.master.grid_rowconfigure(0, weight=1)
@@ -186,62 +187,9 @@ class GraphUI:
         self.master.bind("b", self.color_selected_edge_blue)
         self.master.bind("<Control-z>", self.undo)
         self.master.bind("<Control-y>", self.redo)
-        self.master.bind('<Control-s>', self.wrap_save_game)
-        self.master.bind('<Control-l>', self.wrap_load_game)
+        self.canvas.bind("<B1-Motion>", self.move_node)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_dragging)
         self.setup_buttons(master)
-
-    def wrap_save_game(self, event=None):
-        self.save_game_state('game_state.pkl')
-        print("Game saved successfully!")
-
-    def wrap_load_game(self, event=None):
-        self.load_game_state('game_state.pkl')
-        print("Game loaded successfully!")
-
-    def save_game_state(self, file_path):
-        with open(file_path, 'wb') as f:
-            pickle.dump({
-                'nodes': self.nodes,
-                'edges': self.edges,
-                'node_counter': self.node_counter,
-                'node_positions': self.node_positions,
-                'selected_edge': self.selected_edge,
-                'edge_colors': self.edge_colors,
-                'current_turn': self.current_turn,
-                'turn_counter': self.turn_counter,
-                'undo_stack': self.undo_stack,
-                'redo_stack': self.redo_stack,
-                'g_canvas': nx.node_link_data(self.g_canvas)  # networkx graph data
-            }, f)
-
-    def load_game_state(self, file_path):
-        with open(file_path, 'rb') as f:
-            data = pickle.load(f)
-            self.nodes = data['nodes']
-            self.edges = data['edges']
-            self.node_counter = data['node_counter']
-            self.node_positions = data['node_positions']
-            self.selected_edge = data['selected_edge']
-            self.edge_colors = data['edge_colors']
-            self.current_turn = data['current_turn']
-            self.turn_counter = data['turn_counter']
-            self.undo_stack = data['undo_stack']
-            self.redo_stack = data['redo_stack']
-            self.g_canvas = nx.node_link_graph(data['g_canvas'])
-
-            self.canvas.delete("all")  # Clear the existing canvas
-            for node_id, pos in self.node_positions.items():
-                x, y = pos
-                self.nodes[node_id] = self.canvas.create_oval(x - 10, y - 10, x + 10, y + 10, fill="green",
-                                                              outline="black")
-
-            for (node1, node2), color in self.edge_colors.items():
-                x1, y1 = self.node_positions[node1]
-                x2, y2 = self.node_positions[node2]
-                self.edges[(node1, node2)] = self.canvas.create_line(x1, y1, x2, y2, fill=color)
-
-            self.update_display_info()  # Refresh UI elements
-            self.update_g_canvas()  # Update the graph canvas
 
     def setup_buttons(self, master):
         btn_red = tk.Button(master, text="Red", command=self.wrap_color_red)
@@ -256,11 +204,33 @@ class GraphUI:
         btn_redo = tk.Button(master, text="Redo", command=self.redo)
         btn_redo.grid(row=6, column=0, sticky="ew")
 
-        btn_save = tk.Button(master, text="Save Game", command=self.wrap_save_game)
-        btn_save.grid(row=7, column=0, sticky="ew")
+    def move_node(self, event):
+        if self.dragging_node is not None:
+            node_id = self.dragging_node
+            self.node_positions[node_id] = (event.x, event.y)
+            self.canvas.coords(self.nodes[node_id], event.x - 10, event.y - 10, event.x + 10, event.y + 10)
+            self.update_connected_edges(node_id)
 
-        btn_load = tk.Button(master, text="Load Game", command=self.wrap_load_game)
-        btn_load.grid(row=8, column=0, sticky="ew")
+    def update_connected_edges(self, node_id):
+        radius = 10  # Radius of the node circle
+        for (n1, n2), line_id in list(self.edges.items()):
+            if n1 == node_id or n2 == node_id:
+                x1, y1 = self.node_positions[n1]
+                x2, y2 = self.node_positions[n2]
+                dx = x2 - x1
+                dy = y2 - y1
+                dist = ((dx ** 2) + (dy ** 2)) ** 0.5
+                if dist != 0:  # To avoid division by zero
+                    dx /= dist
+                    dy /= dist
+                    adjusted_x1 = x1 + dx * radius
+                    adjusted_y1 = y1 + dy * radius
+                    adjusted_x2 = x2 - dx * radius
+                    adjusted_y2 = y2 - dy * radius
+                    self.canvas.coords(line_id, adjusted_x1, adjusted_y1, adjusted_x2, adjusted_y2)
+
+    def stop_dragging(self, event):
+        self.dragging_node = None
 
     def wrap_color_red(self):
         # Wrapper for coloring the selected edge red
@@ -305,6 +275,7 @@ class GraphUI:
         if clicked_node is not None:
             if self.edge_start is None:
                 self.edge_start = clicked_node
+                self.dragging_node = clicked_node  # Start dragging this node
             else:
                 if self.edge_start != clicked_node and self.current_turn == "Builder":
                     self.execute_command(CreateEdgeCommand(self.edge_start, clicked_node))
